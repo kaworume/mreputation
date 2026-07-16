@@ -2,6 +2,7 @@ package me.manhumor.mreputation.database.impl;
 
 import me.manhumor.mreputation.MReputation;
 import me.manhumor.mreputation.database.Database;
+import org.bukkit.Bukkit;
 
 import java.io.File;
 import java.sql.*;
@@ -47,7 +48,7 @@ public class SQLiteDatabase implements Database {
             if (rs.next()) {
                 return rs.getInt("reputation");
             } else {
-                setReputation(playerName, 0);
+                setReputation(playerName, 0); // Этот вызов теперь тоже пойдет асинхронно
                 return 0;
             }
         } catch (SQLException e) {
@@ -58,30 +59,33 @@ public class SQLiteDatabase implements Database {
 
     @Override
     public void setReputation(String playerName, int reputation) {
-        String checkSql = "SELECT reputation FROM " + SQLiteDatabase.reputation + " WHERE playerName = ?";
-        String insertSql = "INSERT INTO " + SQLiteDatabase.reputation + " (playerName, reputation) VALUES(?, ?)";
-        String updateSql = "UPDATE " + SQLiteDatabase.reputation + " SET reputation = ? WHERE playerName = ?";
+        // Оборачиваем всю работу с БД в асинхронную задачу Bukkit
+        Bukkit.getScheduler().runTaskAsynchronously(instance, () -> {
+            String checkSql = "SELECT reputation FROM " + SQLiteDatabase.reputation + " WHERE playerName = ?";
+            String insertSql = "INSERT INTO " + SQLiteDatabase.reputation + " (playerName, reputation) VALUES(?, ?)";
+            String updateSql = "UPDATE " + SQLiteDatabase.reputation + " SET reputation = ? WHERE playerName = ?";
 
-        try (PreparedStatement checkStmt = connection.prepareStatement(checkSql)) {
-            checkStmt.setString(1, playerName);
-            ResultSet rs = checkStmt.executeQuery();
+            try (PreparedStatement checkStmt = connection.prepareStatement(checkSql)) {
+                checkStmt.setString(1, playerName);
+                ResultSet rs = checkStmt.executeQuery();
 
-            if (rs.next()) {
-                try (PreparedStatement updateStmt = connection.prepareStatement(updateSql)) {
-                    updateStmt.setInt(1, reputation);
-                    updateStmt.setString(2, playerName);
-                    updateStmt.executeUpdate();
+                if (rs.next()) {
+                    try (PreparedStatement updateStmt = connection.prepareStatement(updateSql)) {
+                        updateStmt.setInt(1, reputation);
+                        updateStmt.setString(2, playerName);
+                        updateStmt.executeUpdate();
+                    }
+                } else {
+                    try (PreparedStatement insertStmt = connection.prepareStatement(insertSql)) {
+                        insertStmt.setString(1, playerName);
+                        insertStmt.setInt(2, reputation);
+                        insertStmt.executeUpdate();
+                    }
                 }
-            } else {
-                try (PreparedStatement insertStmt = connection.prepareStatement(insertSql)) {
-                    insertStmt.setString(1, playerName);
-                    insertStmt.setInt(2, reputation);
-                    insertStmt.executeUpdate();
-                }
+            } catch (SQLException e) {
+                instance.getLogger().warning(e.getMessage());
             }
-        } catch (SQLException e) {
-            instance.getLogger().warning(e.getMessage());
-        }
+        });
     }
 
     @Override
@@ -95,4 +99,3 @@ public class SQLiteDatabase implements Database {
         }
     }
 }
-
